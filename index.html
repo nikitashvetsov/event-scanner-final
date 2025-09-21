@@ -1,45 +1,46 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Event Poster Scanner</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide-react@latest/dist/lucide-react.js"></script>
-</head>
-<body>
-    <div id="root"></div>
-
-    <script type="text/babel">
-        // Load libraries from the window
+<script type="text/babel">
+    // Wait for the entire page and all scripts to load before running the app
+    window.addEventListener('load', () => {
+        // Load libraries that are now guaranteed to be on the window object
         const { useState, useRef } = React;
         const { Camera, Upload, Calendar, CheckCircle, AlertCircle, Edit3, Download, X } = lucide;
-        
-        // Load Tesseract.js OCR library dynamically
-        const loadTesseract = () => {
-            return new Promise((resolve, reject) => {
-                if (window.Tesseract) {
-                    return resolve(window.Tesseract);
-                }
-                const script = document.createElement('script');
-                script.src = 'https://unpkg.com/tesseract.js@5/dist/tesseract.min.js';
-                script.onload = () => resolve(window.Tesseract);
-                script.onerror = reject;
-                document.head.appendChild(script);
-            });
-        };
 
         const EventPosterScanner = () => {
             const [image, setImage] = useState(null);
             const [eventDetails, setEventDetails] = useState(null);
             const [isProcessing, setIsProcessing] = useState(false);
-            const [isEditing, setIsEditing] = useState(false);
             const [currentStep, setCurrentStep] = useState(1);
             const [error, setError] = useState('');
             const fileInputRef = useRef(null);
+
+            const performOCR = async (imageData) => {
+                setIsProcessing(true);
+                setError('');
+                try {
+                    // Tesseract is also loaded via a script tag, so it will be ready here
+                    const worker = await Tesseract.createWorker('eng');
+                    const { data: { text } } = await worker.recognize(imageData);
+                    await worker.terminate();
+                    
+                    if (!text || text.trim().length < 5) throw new Error("No meaningful text found.");
+
+                    setEventDetails({
+                        title: text.split('\n')[0] || "Event Title (Please Edit)",
+                        date: new Date().toISOString().split('T')[0],
+                        startTime: "19:00",
+                        endTime: "21:00",
+                        location: "Event Location (Please Edit)",
+                        description: text,
+                    });
+                    setCurrentStep(3);
+                } catch (err) {
+                    console.error('OCR Error:', err);
+                    setError('Could not process the image. Please try a clearer one.');
+                    setCurrentStep(1);
+                } finally {
+                    setIsProcessing(false);
+                }
+            };
 
             const handleImageUpload = (event) => {
                 const file = event.target.files[0];
@@ -52,37 +53,6 @@
                         performOCR(e.target.result);
                     };
                     reader.readAsDataURL(file);
-                }
-            };
-
-            const performOCR = async (imageData) => {
-                setIsProcessing(true);
-                setError('');
-                try {
-                    const Tesseract = await loadTesseract();
-                    const worker = await Tesseract.createWorker('eng');
-                    const { data: { text } } = await worker.recognize(imageData);
-                    await worker.terminate();
-                    
-                    if (!text || text.trim().length < 5) throw new Error("No text found.");
-
-                    // Simplified parser
-                    setEventDetails({
-                        title: text.split('\n')[0] || "Event Title (Please Edit)",
-                        date: new Date().toISOString().split('T')[0],
-                        startTime: "19:00",
-                        endTime: "21:00",
-                        location: "Event Location (Please Edit)",
-                        description: text,
-                    });
-                    setCurrentStep(3);
-                    setIsEditing(true);
-                } catch (err) {
-                    console.error('OCR Error:', err);
-                    setError('Could not process the image. Please try a clearer one.');
-                    setCurrentStep(1);
-                } finally {
-                    setIsProcessing(false);
                 }
             };
             
@@ -143,12 +113,10 @@
                             {currentStep === 2 && (
                                 <div className="text-center">
                                     <h2 className="text-2xl font-semibold mb-6">2. Processing...</h2>
-                                    {isProcessing && (
-                                        <div className="flex items-center justify-center">
-                                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mr-3"></div>
-                                            <span className="text-gray-600">Extracting text from image...</span>
-                                        </div>
-                                    )}
+                                    <div className="flex items-center justify-center">
+                                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mr-3"></div>
+                                        <span className="text-gray-600">Extracting text from image...</span>
+                                    </div>
                                 </div>
                             )}
                             {currentStep === 3 && eventDetails && (
@@ -176,6 +144,5 @@
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<EventPosterScanner />);
-    </script>
-</body>
-</html>
+    });
+</script>
