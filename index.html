@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Event Poster Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide-react@latest/dist/lucide-react.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Load libraries from the window
+        const { useState, useRef } = React;
+        const { Camera, Upload, Calendar, CheckCircle, AlertCircle, Edit3, Download, X } = lucideReact;
+        
+        // Load Tesseract.js OCR library dynamically
+        const loadTesseract = () => {
+            return new Promise((resolve, reject) => {
+                if (window.Tesseract) {
+                    return resolve(window.Tesseract);
+                }
+                const script = document.createElement('script');
+                script.src = 'https://unpkg.com/tesseract.js@5/dist/tesseract.min.js';
+                script.onload = () => resolve(window.Tesseract);
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        };
+
+        const EventPosterScanner = () => {
+            const [image, setImage] = useState(null);
+            const [eventDetails, setEventDetails] = useState(null);
+            const [isProcessing, setIsProcessing] = useState(false);
+            const [isEditing, setIsEditing] = useState(false);
+            const [currentStep, setCurrentStep] = useState(1);
+            const [error, setError] = useState('');
+            const fileInputRef = useRef(null);
+
+            const handleImageUpload = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        setImage(e.target.result);
+                        setCurrentStep(2);
+                        setError('');
+                        performOCR(e.target.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const performOCR = async (imageData) => {
+                setIsProcessing(true);
+                setError('');
+                try {
+                    const Tesseract = await loadTesseract();
+                    const worker = await Tesseract.createWorker('eng');
+                    const { data: { text } } = await worker.recognize(imageData);
+                    await worker.terminate();
+                    
+                    if (!text || text.trim().length < 5) throw new Error("No text found.");
+
+                    // Simplified parser
+                    setEventDetails({
+                        title: text.split('\n')[0] || "Event Title (Please Edit)",
+                        date: new Date().toISOString().split('T')[0],
+                        startTime: "19:00",
+                        endTime: "21:00",
+                        location: "Event Location (Please Edit)",
+                        description: text,
+                    });
+                    setCurrentStep(3);
+                    setIsEditing(true);
+                } catch (err) {
+                    console.error('OCR Error:', err);
+                    setError('Could not process the image. Please try a clearer one.');
+                    setCurrentStep(1);
+                } finally {
+                    setIsProcessing(false);
+                }
+            };
+            
+            const handleDetailChange = (field, value) => {
+                setEventDetails(prev => ({ ...prev, [field]: value }));
+            };
+
+            const generateCalendarFile = () => {
+                if (!eventDetails) return;
+                const { date, startTime, endTime, title, location, description } = eventDetails;
+                const formatDate = (d, t) => new Date(`${d}T${t}:00`).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+                let icsContent = [
+                    'BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT',
+                    `UID:${Date.now()}@eventscanner.com`,
+                    `DTSTART:${formatDate(date, startTime)}`,
+                    `DTEND:${formatDate(date, endTime)}`,
+                    `SUMMARY:${title}`, `LOCATION:${location}`, `DESCRIPTION:${description.replace(/\n/g, '\\n')}`,
+                    'END:VEVENT', 'END:VCALENDAR'
+                ].join('\n');
+                
+                const blob = new Blob([icsContent], { type: 'text/calendar' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${title.replace(/\s+/g, '_') || 'Event'}.ics`;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const resetApp = () => {
+                setImage(null);
+                setEventDetails(null);
+                setCurrentStep(1);
+                setError('');
+                if (fileInputRef.current) fileInputRef.current.value = '';
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+                    <div className="max-w-4xl mx-auto">
+                        <div className="text-center mb-8">
+                            <h1 className="text-4xl font-bold text-gray-800 mb-2">Event Poster Scanner</h1>
+                            <p className="text-gray-600">Extract event details and add to your calendar</p>
+                        </div>
+                        <div className="bg-white rounded-lg shadow-lg p-6">
+                            {currentStep === 1 && (
+                                <div className="text-center">
+                                    <h2 className="text-2xl font-semibold mb-6">1. Upload Poster</h2>
+                                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-12">
+                                        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                                        <button onClick={() => fileInputRef.current.click()} className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors flex items-center justify-center w-full text-lg">
+                                            <Upload className="h-5 w-5 mr-2" /> Upload from Gallery
+                                        </button>
+                                    </div>
+                                    {error && <div className="mt-4 p-3 bg-red-100 text-red-700 rounded-lg">{error}</div>}
+                                </div>
+                            )}
+                            {currentStep === 2 && (
+                                <div className="text-center">
+                                    <h2 className="text-2xl font-semibold mb-6">2. Processing...</h2>
+                                    {isProcessing && (
+                                        <div className="flex items-center justify-center">
+                                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mr-3"></div>
+                                            <span className="text-gray-600">Extracting text from image...</span>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {currentStep === 3 && eventDetails && (
+                                <div>
+                                    <h2 className="text-2xl font-semibold mb-4">3. Review and Save</h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                        <div><label className="block text-sm font-medium">Title</label><input type="text" value={eventDetails.title} onChange={e => handleDetailChange('title', e.target.value)} className="w-full p-2 border rounded"/></div>
+                                        <div><label className="block text-sm font-medium">Date</label><input type="date" value={eventDetails.date} onChange={e => handleDetailChange('date', e.target.value)} className="w-full p-2 border rounded"/></div>
+                                        <div><label className="block text-sm font-medium">Start Time</label><input type="time" value={eventDetails.startTime} onChange={e => handleDetailChange('startTime', e.target.value)} className="w-full p-2 border rounded"/></div>
+                                        <div><label className="block text-sm font-medium">End Time</label><input type="time" value={eventDetails.endTime} onChange={e => handleDetailChange('endTime', e.target.value)} className="w-full p-2 border rounded"/></div>
+                                        <div className="md:col-span-2"><label className="block text-sm font-medium">Location</label><input type="text" value={eventDetails.location} onChange={e => handleDetailChange('location', e.target.value)} className="w-full p-2 border rounded"/></div>
+                                        <div className="md:col-span-2"><label className="block text-sm font-medium">Description (from poster)</label><textarea readOnly rows="4" value={eventDetails.description} className="w-full p-2 border rounded bg-gray-50"/></div>
+                                    </div>
+                                    <button onClick={generateCalendarFile} className="w-full bg-green-500 text-white py-3 rounded-lg hover:bg-green-600 mb-3 flex items-center justify-center text-lg">
+                                        <Download className="h-5 w-5 mr-2" /> Download .ics File
+                                    </button>
+                                    <button onClick={resetApp} className="w-full bg-gray-500 text-white py-2 rounded-lg hover:bg-gray-600">Scan Another Poster</button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<EventPosterScanner />);
+    </script>
+</body>
+</html>
